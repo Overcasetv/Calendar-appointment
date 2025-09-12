@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox, filedialog
 import time
 import shutil
+import calendar
 
 # Set the appearance mode for the application
 ctk.set_appearance_mode("light")
@@ -62,7 +63,9 @@ class ScheduleSystem:
         """Loads system settings from a JSON file, or initializes defaults if not found."""
         default_settings = {
             "session_fee": 50.00,
-            "time_slots": ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00"]
+            "time_slots": ["09:00", "09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "14:30", "15:00", "15:30", "16:00"],
+            "time_slots_by_date": {},
+            "closed_days": []
         }
         if os.path.exists(self.settings_file):
             try:
@@ -97,20 +100,41 @@ class ScheduleSystem:
 
     def get_available_slots(self, date_str):
         """Returns a list of all available slots for a given date."""
-        all_slots = self.settings.get("time_slots", [])
+        if date_str in self.settings.get("closed_days", []):
+            return []
+            
+        all_slots = self.settings.get("time_slots_by_date", {}).get(date_str, self.settings.get("time_slots", []))
+        
         booked_slots = [
             app['slot_number'] for app in self.appointments
             if app['date'] == date_str and app['status'] != 'Cancelled'
         ]
         return [slot for slot in all_slots if slot not in booked_slots]
     
-    def get_total_slots_global(self):
-        """Returns the global total number of appointment slots."""
-        return len(self.settings.get("time_slots", []))
+    def get_total_slots_for_date(self, date_str):
+        """Returns the total number of slots for a specific date."""
+        if date_str in self.settings.get("closed_days", []):
+            return 0
+        return len(self.settings.get("time_slots_by_date", {}).get(date_str, self.settings.get("time_slots", [])))
 
-    def set_time_slots(self, new_slots):
-        """Updates the list of available time slots."""
-        self.settings["time_slots"] = new_slots
+    def set_time_slots(self, date_str, new_slots):
+        """Updates the list of available time slots for a specific date."""
+        self.settings["time_slots_by_date"][date_str] = new_slots
+        self._save_settings()
+        return True
+    
+    def set_day_closed(self, date_str, is_closed):
+        """Marks a specific day as closed or open."""
+        closed_days = set(self.settings.get("closed_days", []))
+        if is_closed:
+            closed_days.add(date_str)
+            # Remove any custom slots for a closed day
+            if date_str in self.settings.get("time_slots_by_date", {}):
+                del self.settings["time_slots_by_date"][date_str]
+        else:
+            closed_days.discard(date_str)
+        
+        self.settings["closed_days"] = list(closed_days)
         self._save_settings()
         return True
 
@@ -123,6 +147,9 @@ class ScheduleSystem:
 
     def make_appointment(self, date_str, client_id, client_name, slot_number, comment):
         """Creates a single appointment if the slot is available."""
+        if date_str in self.settings.get("closed_days", []):
+            return False, "This day is marked as closed and no appointments can be booked."
+
         if slot_number not in self.get_available_slots(date_str):
             return False, f"Slot {slot_number} is not available for this date."
         
@@ -491,14 +518,12 @@ class App(ctk.CTk):
         self.tab_view.add("Appointments")
         self.tab_view.add("Registration")
         self.tab_view.add("Client List")
-        self.tab_view.add("Check-in")
         self.tab_view.add("Reports")
 
         self.setup_dashboard_tab()
         self.setup_appointments_tab()
         self.setup_registration_tab()
         self.setup_client_list_tab()
-        self.setup_checkin_tab()
         self.setup_reports_tab()
         
     def on_tab_change(self, selected_tab_name):
@@ -511,26 +536,19 @@ class App(ctk.CTk):
         elif selected_tab_name == "Client List":
             self.render_clients()
         elif selected_tab_name == "Check-in":
-            for widget in self.checkin_results_frame.winfo_children():
-                widget.destroy()
+            # This tab has been removed, but this is a good practice to prevent errors if the tab is accidentally re-added.
+            pass
 
     def setup_dashboard_tab(self):
         """Sets up the UI for the Dashboard tab with a calendar and appointment controls."""
         dashboard_tab = self.tab_view.tab("Dashboard")
         dashboard_tab.grid_columnconfigure(0, weight=1)
         dashboard_tab.grid_columnconfigure(1, weight=1)
+        dashboard_tab.grid_rowconfigure(0, weight=1)
         dashboard_tab.grid_rowconfigure(1, weight=1)
         
-        time_slot_frame = ctk.CTkFrame(dashboard_tab)
-        time_slot_frame.grid(row=0, column=0, columnspan=2, padx=20, pady=(10, 20), sticky="nw")
-        ctk.CTkLabel(time_slot_frame, text="Set Time Slots:", font=ctk.CTkFont(size=14, weight="bold")).pack(side="left", padx=10, pady=5)
-        self.time_slots_entry = ctk.CTkEntry(time_slot_frame, width=400, placeholder_text="Enter comma-separated times (e.g., 09:00, 09:30, 10:00)")
-        self.time_slots_entry.pack(side="left", padx=5)
-        update_time_slots_button = ctk.CTkButton(time_slot_frame, text="Set Slots", width=80, command=self.update_time_slots)
-        update_time_slots_button.pack(side="left", padx=5)
-
         calendar_frame = ctk.CTkFrame(dashboard_tab)
-        calendar_frame.grid(row=1, column=0, padx=20, pady=10, sticky="nsew")
+        calendar_frame.grid(row=0, column=0, rowspan=2, padx=20, pady=20, sticky="nsew")
         calendar_frame.grid_columnconfigure(0, weight=1)
 
         self.calendar_header_frame = ctk.CTkFrame(calendar_frame, fg_color="transparent")
@@ -552,25 +570,7 @@ class App(ctk.CTk):
         
         self.draw_calendar()
         self.refresh_dashboard()
-
-    def update_time_slots(self):
-        """Updates the time slots based on user input."""
-        slots_str = self.time_slots_entry.get()
-        if not slots_str:
-            messagebox.showerror("Error", "Please enter at least one time slot.")
-            return
-
-        new_slots = [s.strip() for s in slots_str.split(',') if s.strip()]
-        if not all(self.is_valid_time_format(s) for s in new_slots):
-            messagebox.showerror("Error", "Invalid time format. Please use HH:MM format (e.g., 09:00, 14:30).")
-            return
-            
-        if self.backend.set_time_slots(new_slots):
-            messagebox.showinfo("Success", "Time slots updated successfully.")
-            self.refresh_dashboard()
-        else:
-            messagebox.showerror("Error", "Failed to update time slots.")
-
+        
     def is_valid_time_format(self, time_str):
         """Checks if a string is in HH:MM format."""
         try:
@@ -697,22 +697,30 @@ class App(ctk.CTk):
             date_obj = first_day_of_month.replace(day=day_num)
             day_str = date_obj.strftime("%Y-%m-%d")
             
-            total_slots = self.backend.get_total_slots_global()
-            available_slots = len(self.backend.get_available_slots(day_str))
+            is_closed = day_str in self.backend.settings.get("closed_days", [])
+            booked_slots = self.backend.get_booked_slots(day_str)
+            total_slots = self.backend.get_total_slots_for_date(day_str)
+            available_slots = total_slots - booked_slots
             
-            if total_slots > 0:
+            if is_closed:
+                text_color = "white"
+                bg_color = "red"
+                button_text = f"{day_num}\nClosed"
+            elif total_slots == 0:
+                text_color = "black"
+                bg_color = "gray"
+                button_text = f"{day_num}\nSet Slots"
+            else:
                 text_color = "black"
                 if available_slots == 0:
-                    bg_color = "red"
+                    bg_color = "#E0E0E0"  # A shade of grey for fully booked days
                 elif available_slots / total_slots < 0.25:
                     bg_color = "orange"
                 else:
-                    bg_color = "#E0E0E0"  # Soft gray for available days
-            else:
-                bg_color = "gray"
-                text_color = "black"
+                    bg_color = "#E0E0E0"
+                button_text = f"{day_num}\nSlots: {available_slots}/{total_slots}"
             
-            day_button = ctk.CTkButton(self.calendar_grid, text=f"{day_num}\nSlots: {available_slots}/{total_slots}", 
+            day_button = ctk.CTkButton(self.calendar_grid, text=button_text, 
                                       command=lambda d=date_obj.date(): self.select_date(d),
                                       fg_color=bg_color,
                                       text_color=text_color,
@@ -726,14 +734,84 @@ class App(ctk.CTk):
                 row += 1
     
     def select_date(self, date):
-        """Opens a new window to make an appointment for a specific date."""
-        total_slots = self.backend.get_total_slots_global()
-
-        if total_slots == 0:
-            messagebox.showerror("Error", "Please set the time slots on the Dashboard first.")
-            return
+        """Opens a new window to manage options for a specific date."""
+        self.open_day_options_window(date)
+    
+    def open_day_options_window(self, date):
+        """Creates a new window with options for a specific day."""
+        date_str = date.strftime('%Y-%m-%d')
+        options_window = ctk.CTkToplevel(self)
+        options_window.title(f"Options for {date_str}")
+        options_window.geometry("400x300")
+        options_window.resizable(False, False)
         
-        self.open_appointment_window(date)
+        self.update_idletasks()
+        app_x = self.winfo_x()
+        app_y = self.winfo_y()
+        app_width = self.winfo_width()
+        app_height = self.winfo_height()
+        
+        win_width = 400
+        win_height = 300
+        x = app_x + (app_width // 2) - (win_width // 2)
+        y = app_y + (app_height // 2) - (win_height // 2)
+        options_window.geometry(f"{win_width}x{win_height}+{x}+{y}")
+        
+        options_window.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(options_window, text=f"Manage: {date.strftime('%B %d, %Y')}", font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0, pady=10)
+
+        # Frame for setting slots
+        set_slots_frame = ctk.CTkFrame(options_window)
+        set_slots_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        set_slots_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(set_slots_frame, text="Set Custom Time Slots:", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(5,0), padx=5, sticky="w")
+        current_slots_str = ", ".join(self.backend.settings.get("time_slots_by_date", {}).get(date_str, self.backend.settings.get("time_slots", [])))
+        
+        self.slots_entry = ctk.CTkEntry(set_slots_frame, placeholder_text="e.g., 09:00, 10:00, 11:00")
+        self.slots_entry.insert(0, current_slots_str)
+        self.slots_entry.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        
+        def update_slots_action():
+            slots_str = self.slots_entry.get()
+            new_slots = [s.strip() for s in slots_str.split(',') if s.strip()]
+            if not all(self.is_valid_time_format(s) for s in new_slots):
+                messagebox.showerror("Error", "Invalid time format. Use HH:MM.")
+                return
+            
+            if self.backend.set_time_slots(date_str, new_slots):
+                messagebox.showinfo("Success", f"Time slots updated for {date_str}.")
+                options_window.destroy()
+                self.refresh_dashboard()
+
+        ctk.CTkButton(set_slots_frame, text="Set Slots", command=update_slots_action).grid(row=2, column=0, pady=5, padx=5, sticky="ew")
+
+        # Frame for quick actions
+        quick_actions_frame = ctk.CTkFrame(options_window, fg_color="transparent")
+        quick_actions_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        quick_actions_frame.grid_columnconfigure(0, weight=1)
+        quick_actions_frame.grid_columnconfigure(1, weight=1)
+
+        is_closed = date_str in self.backend.settings.get("closed_days", [])
+        
+        def book_appointment_action():
+            options_window.destroy()
+            self.open_appointment_window(date)
+
+        def toggle_closed_action():
+            if self.backend.set_day_closed(date_str, not is_closed):
+                messagebox.showinfo("Success", f"Day {date_str} successfully marked as {'Open' if is_closed else 'Closed'}.")
+                options_window.destroy()
+                self.refresh_dashboard()
+            else:
+                messagebox.showerror("Error", "Failed to update day status.")
+
+        ctk.CTkButton(quick_actions_frame, text="Book Appointment", command=book_appointment_action).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        
+        toggle_text = "Mark as Open" if is_closed else "Mark as Closed"
+        toggle_color = "green" if is_closed else "red"
+        ctk.CTkButton(quick_actions_frame, text=toggle_text, command=toggle_closed_action, fg_color=toggle_color, hover_color=toggle_color).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
     def open_appointment_window(self, date):
         """Creates a new window for making an appointment."""
@@ -861,7 +939,7 @@ class App(ctk.CTk):
         new_slot_frame.pack(pady=5)
         ctk.CTkLabel(new_slot_frame, text="New Slot:").pack(side="left")
         
-        all_slots = self.backend.settings.get("time_slots", [])
+        all_slots = self.backend.settings.get("time_slots_by_date", {}).get(appointment['date'], self.backend.settings.get("time_slots", []))
         new_slot_optionmenu = ctk.CTkOptionMenu(new_slot_frame, values=all_slots)
         new_slot_optionmenu.set(appointment['slot_number'])
         new_slot_optionmenu.pack(side="left")
@@ -922,10 +1000,6 @@ class App(ctk.CTk):
     def refresh_dashboard(self):
         """Refreshes the data displayed in the dashboard."""
         self.draw_calendar()
-        total_slots = self.backend.get_total_slots_global()
-        current_slots = ", ".join(self.backend.settings.get("time_slots", []))
-        self.time_slots_entry.delete(0, tk.END)
-        self.time_slots_entry.insert(0, current_slots)
         
     def render_appointments_list(self, appointments_to_display=None):
         """Renders the list of active appointments on the new tab, sorted by date and time."""
@@ -1074,41 +1148,8 @@ class App(ctk.CTk):
         self.render_clients()
         
     def setup_checkin_tab(self):
-        """Sets up the UI elements for the Check-in tab."""
-        checkin_tab = self.tab_view.tab("Check-in")
-        checkin_tab.grid_columnconfigure(0, weight=1)
-        
-        header_frame = ctk.CTkFrame(checkin_tab, fg_color="transparent")
-        header_frame.pack(fill="x", padx=20, pady=10)
-        
-        ctk.CTkLabel(header_frame, text="Check-in & Payments", font=ctk.CTkFont(size=24, weight="bold")).pack(side="left")
-        
-        export_button = ctk.CTkButton(header_frame, text="Export Clients to CSV", command=self.export_clients_csv)
-        export_button.pack(side="right")
-        
-        search_frame = ctk.CTkFrame(checkin_tab, fg_color="transparent")
-        search_frame.pack(padx=20, pady=10, fill="x")
-        ctk.CTkLabel(search_frame, text="Search Client:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=5)
-        self.checkin_search_entry = ctk.CTkEntry(search_frame, placeholder_text="Enter name or email...")
-        self.checkin_search_entry.pack(side="left", expand=True, fill="x", padx=5)
-        self.checkin_search_button = ctk.CTkButton(search_frame, text="Search", command=self.search_checkin_client)
-        self.checkin_search_button.pack(side="left", padx=5)
-
-        self.checkin_results_frame = ctk.CTkScrollableFrame(checkin_tab)
-        self.checkin_results_frame.pack(padx=20, pady=10, fill="both", expand=True)
-        
-        fees_frame = ctk.CTkFrame(checkin_tab)
-        fees_frame.pack(padx=20, pady=(10, 20), fill="x")
-        ctk.CTkLabel(fees_frame, text="Session Fee", font=ctk.CTkFont(weight="bold")).pack(pady=(5,10))
-        
-        session_fee_frame = ctk.CTkFrame(fees_frame, fg_color="transparent")
-        session_fee_frame.pack(fill="x", padx=10)
-        ctk.CTkLabel(session_fee_frame, text="Fee ($):").pack(side="left", padx=(0, 5))
-        self.session_fee_entry = ctk.CTkEntry(session_fee_frame, width=80)
-        self.session_fee_entry.insert(0, str(self.backend.get_session_fee()))
-        self.session_fee_entry.pack(side="left", padx=5)
-        
-        ctk.CTkButton(fees_frame, text="Set Session Fee", command=self.update_session_fee_action).pack(pady=10)
+        # This function is no longer needed but kept for completeness
+        pass
 
     def update_session_fee_action(self):
         """Handles the 'Set Session Fee' button click."""
