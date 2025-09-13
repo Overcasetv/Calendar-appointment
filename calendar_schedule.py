@@ -742,7 +742,7 @@ class App(ctk.CTk):
         date_str = date.strftime('%Y-%m-%d')
         options_window = ctk.CTkToplevel(self)
         options_window.title(f"Options for {date_str}")
-        options_window.geometry("500x400")
+        options_window.geometry("400x300")
         options_window.resizable(False, False)
         
         self.update_idletasks()
@@ -751,8 +751,8 @@ class App(ctk.CTk):
         app_width = self.winfo_width()
         app_height = self.winfo_height()
         
-        win_width = 500
-        win_height = 400
+        win_width = 400
+        win_height = 300
         x = app_x + (app_width // 2) - (win_width // 2)
         y = app_y + (app_height // 2) - (win_height // 2)
         options_window.geometry(f"{win_width}x{win_height}+{x}+{y}")
@@ -808,6 +808,7 @@ class App(ctk.CTk):
                 messagebox.showerror("Error", "Failed to update day status.")
 
         ctk.CTkButton(quick_actions_frame, text="Book Appointment", command=book_appointment_action).grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        
         toggle_text = "Mark as Open" if is_closed else "Mark as Closed"
         toggle_color = "green" if is_closed else "red"
         ctk.CTkButton(quick_actions_frame, text=toggle_text, command=toggle_closed_action, fg_color=toggle_color, hover_color=toggle_color).grid(row=0, column=1, padx=5, pady=5, sticky="ew")
@@ -816,7 +817,7 @@ class App(ctk.CTk):
         """Creates a new window for making an appointment."""
         appointment_window = ctk.CTkToplevel(self)
         appointment_window.title(f"Book Appointment on {date.strftime('%Y-%m-%d')}")
-        appointment_window.geometry("400x550")
+        appointment_window.geometry("550x550")
         
         self.update_idletasks()
         app_x = self.winfo_x()
@@ -824,7 +825,7 @@ class App(ctk.CTk):
         app_width = self.winfo_width()
         app_height = self.winfo_height()
         
-        win_width = 400
+        win_width = 550
         win_height = 550
         x = app_x + (app_width // 2) - (win_width // 2)
         y = app_y + (app_height // 2) - (win_height // 2)
@@ -840,40 +841,16 @@ class App(ctk.CTk):
         self.slot_optionmenu.pack(side="left", fill="x", expand=True)
         
         ctk.CTkLabel(appointment_window, text="Add a Comment (optional):", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
-        self.comment_entry = ctk.CTkTextbox(appointment_window, height=60, width=250)
+        self.comment_entry = ctk.CTkTextbox(appointment_window, height=80, width=350)
         self.comment_entry.pack(padx=20, pady=5)
 
-        search_frame = ctk.CTkFrame(appointment_window, fg_color="transparent")
-        search_frame.pack(fill="x", padx=20, pady=(15, 5))
+        search_client_frame = ctk.CTkFrame(appointment_window, fg_color="transparent")
+        search_client_frame.pack(fill="x", padx=20, pady=(15, 5))
+        
+        search_frame = ctk.CTkFrame(search_client_frame, fg_color="transparent")
+        search_frame.pack(fill="x", expand=True)
         self.search_entry_app = ctk.CTkEntry(search_frame, placeholder_text="Search clients...")
-        self.search_entry_app.pack(side="left", fill="x", expand=True)
-        
-        ctk.CTkLabel(appointment_window, text="Select a Client:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
-        
-        client_list_frame = ctk.CTkScrollableFrame(appointment_window, height=200)
-        client_list_frame.pack(fill="x", padx=20, pady=5)
-
-        self.selected_client_id = None
-        radio_var = tk.StringVar(value="")
-        
-        def on_client_select():
-            self.selected_client_id = radio_var.get()
-            
-        def filter_client_list_app(event):
-            query = self.search_entry_app.get().lower()
-            filtered_clients = [
-                client for client in self.backend.get_all_clients()
-                if query in client.get('name', '').lower()
-            ]
-            self.populate_client_list(filtered_clients, client_list_frame, radio_var, on_client_select)
-
-        self.search_entry_app.bind("<KeyRelease>", filter_client_list_app)
-
-        all_clients = self.backend.get_all_clients()
-        if not all_clients:
-            ctk.CTkLabel(client_list_frame, text="No clients found. Please register a client first.").pack(pady=10)
-        else:
-            self.populate_client_list(all_clients, client_list_frame, radio_var, on_client_select)
+        self.search_entry_app.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
         def confirm_appointment():
             if not self.selected_client_id:
@@ -902,9 +879,36 @@ class App(ctk.CTk):
             else:
                 messagebox.showerror("Error", f"Could not book appointment: {message}")
 
-        confirm_button = ctk.CTkButton(appointment_window, text="Confirm Appointment", command=confirm_appointment)
-        confirm_button.pack(pady=2)####
+        confirm_button = ctk.CTkButton(search_client_frame, text="Confirm Appointment", command=confirm_appointment)
+        confirm_button.pack(pady=5, side="right", fill="x", expand=False)
         
+        ctk.CTkLabel(appointment_window, text="Select a Client:", font=ctk.CTkFont(size=14)).pack(pady=(10, 5))
+        
+        client_list_frame = ctk.CTkScrollableFrame(appointment_window, height=150)
+        client_list_frame.pack(fill="x", padx=20, pady=5)
+
+        self.selected_client_id = None
+        radio_var = tk.StringVar(value="")
+        
+        def on_client_select():
+            self.selected_client_id = radio_var.get()
+            
+        def filter_client_list_app(event):
+            query = self.search_entry_app.get().lower()
+            filtered_clients = [
+                client for client in self.backend.get_all_clients()
+                if query in client.get('name', '').lower()
+            ]
+            self.populate_client_list(filtered_clients, client_list_frame, radio_var, on_client_select)
+
+        self.search_entry_app.bind("<KeyRelease>", filter_client_list_app)
+
+        all_clients = self.backend.get_all_clients()
+        if not all_clients:
+            ctk.CTkLabel(client_list_frame, text="No clients found. Please register a client first.").pack(pady=10)
+        else:
+            self.populate_client_list(all_clients, client_list_frame, radio_var, on_client_select)
+
     def open_edit_appointment_window(self, appointment):
         """Creates a new window to edit an existing appointment."""
         edit_window = ctk.CTkToplevel(self)
